@@ -23,6 +23,7 @@ jobs:
       - name: Rodar notificador
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
         run: python notify.py
       - name: Salvar estado
         run: |
