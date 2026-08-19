@@ -2,7 +2,9 @@ name: yt-discord-notify
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # de 5 em 5 min: live perde valor se o aviso chega tarde.
+    # o agendador do GitHub ainda atrasa alguns minutos por conta propria.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +24,9 @@ jobs:
           python-version: '3.12'
       - name: Rodar notificador
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}              # #videos-novos (MCD ANIMES)
+          DISCORD_WEBHOOK_OUTRO: ${{ secrets.DISCORD_WEBHOOK_OUTRO }}  # #outro-mcd
+          DISCORD_WEBHOOK_LIVES: ${{ secrets.DISCORD_WEBHOOK_LIVES }}  # #lives
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
         run: python notify.py
       - name: Salvar estado
