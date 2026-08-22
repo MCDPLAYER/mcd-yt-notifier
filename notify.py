@@ -87,19 +87,63 @@ def ids_rss(yt):
             if e.findtext(Y + "videoId")]
 
 
-def id_live_html(yt):
-    """De graca. A pagina /live do canal aponta pro stream que esta no ar."""
-    html = http_get("https://www.youtube.com/channel/%s/live" % yt).read().decode("utf-8", "replace")
-    if '"isLiveNow":true' not in html and '"isLive":true' not in html:
+def bloco_json(html, chave):
+    """Recorta o objeto JSON que vem logo depois de \"chave\": contando chaves."""
+    i = html.find('"%s":{' % chave)
+    if i < 0:
         return None
-    m = re.search(r'"videoId":"([A-Za-z0-9_-]{11})"', html)
-    return m.group(1) if m else None
+    i += len(chave) + 3                      # aspas + chave + aspas + dois-pontos
+    nivel, dentro_str, escapado = 0, False, False
+    for j in range(i, len(html)):
+        c = html[j]
+        if dentro_str:
+            if escapado:
+                escapado = False
+            elif c == "\\":
+                escapado = True
+            elif c == '"':
+                dentro_str = False
+            continue
+        if c == '"':
+            dentro_str = True
+        elif c == "{":
+            nivel += 1
+        elif c == "}":
+            nivel -= 1
+            if nivel == 0:
+                try:
+                    return json.loads(html[i:j + 1])
+                except Exception:
+                    return None
+    return None
 
 
-def coleta_ids(yt):
+def id_live_html(yt):
+    """De graca. A pagina /live do canal aponta pro stream que esta no ar.
+
+    So aceita o videoId se o proprio player da pagina disser que o video e
+    DESTE canal e esta ao vivo agora. A versao antiga pegava o primeiro
+    "videoId" de ~850 KB de HTML sem conferir dono - quando o YouTube devolve
+    pro IP do runner uma pagina generica (com live popular de terceiro),
+    entrava video de canal alheio no feed. Foi o furo de 21/08/2026.
+    """
+    html = http_get("https://www.youtube.com/channel/%s/live" % yt).read().decode("utf-8", "replace")
+    vd = bloco_json(html, "videoDetails")
+    if not vd or vd.get("channelId") != yt:
+        return None
+    if not (vd.get("isLive") or vd.get("isLiveNow")):
+        return None
+    vid = vd.get("videoId") or ""
+    return vid if re.match(r"^[A-Za-z0-9_-]{11}$", vid) else None
+
+
+def coleta_ids(yt, usa_live=True):
     """Uniao das fontes que responderam. Fonte que falha nao derruba a rodada."""
     ids, fontes = [], []
-    for nome, fn in (("playlist", ids_playlist), ("rss", ids_rss), ("live-html", id_live_html)):
+    tudo = [("playlist", ids_playlist), ("rss", ids_rss)]
+    if usa_live:                              # canal que nao faz live nao raspa /live
+        tudo.append(("live-html", id_live_html))
+    for nome, fn in tudo:
         if nome == "playlist" and not YT_KEY:
             continue
         try:
@@ -126,6 +170,7 @@ def detalhes(ids):
         sn = it["snippet"]
         out[it["id"]] = {
             "titulo": sn.get("title", "(video novo)"),
+            "canal": sn.get("channelId", ""),               # trava anti-video-alheio
             "dur": iso_to_sec(it.get("contentDetails", {}).get("duration")),
             "estado": sn.get("liveBroadcastContent", "none"),   # live | upcoming | none
             "foi_live": "liveStreamingDetails" in it,
@@ -166,7 +211,7 @@ def roda_canal(cfg, st):
     e = st["canais"].setdefault(key, {"seen": [], "watch": [], "live_avisado": []})
     seen, watch, avisados = e["seen"], e.get("watch", []), e.get("live_avisado", [])
 
-    ids, fontes = coleta_ids(cfg["yt"])
+    ids, fontes = coleta_ids(cfg["yt"], usa_live=bool(cfg["live"]))
     print("[%s] fontes: %s" % (cfg["nome"], " ".join(fontes)))
 
     if novo_canal:
@@ -187,6 +232,11 @@ def roda_canal(cfg, st):
     for vid in reversed(checar):            # do mais antigo pro mais novo
         d = det.get(vid)
         if not d:                           # sem YT_KEY, ou video sumiu/privado
+            continue
+        if d["canal"] != cfg["yt"]:
+            # ultima trava: nenhuma fonte pode injetar video de outro canal
+            print("[%s] IGNORADO (canal alheio %s): %s" % (cfg["nome"], d["canal"], vid))
+            seen.append(vid)
             continue
         estado = d["estado"]
 
